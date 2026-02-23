@@ -1,0 +1,7 @@
+streamlit 
+tensorflow==2.12.0
+pillow
+numpy
+supabase
+requests
+keras==2.12.0
