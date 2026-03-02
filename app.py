@@ -20,7 +20,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # -----------------------
 @st.cache_resource
 def load_tf_model():
-    model = load_model("keras_Model.h5", compile=False)
+    model = load_model("keras_model.h5", compile=False)
     class_names = open("labels.txt", "r").readlines()
     return model, class_names
 
