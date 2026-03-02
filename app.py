@@ -4,120 +4,106 @@ import requests
 from PIL import Image, ImageOps
 from io import BytesIO
 from tensorflow.keras.models import load_model
-from supabase import create_client, Client
+from supabase import create_client
+import uuid
 
-# -----------------------------
+# -----------------------
 # CONFIG
-# -----------------------------
-SUPABASE_URL = "https://cmnefsyoqrozpejbyxlh.supabase.co"
-SUPABASE_KEY = "sb_secret_V1IhfnEDbpesVZb8sWDO4Q_UE_QZUk-"
-TABLE_NAME = "images"
+# -----------------------
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
-# -----------------------------
-# LOAD MODEL (cached)
-# -----------------------------
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# -----------------------
+# LOAD MODEL
+# -----------------------
 @st.cache_resource
 def load_tf_model():
-    model = load_model("keras_model.h5", compile=False)
+    model = load_model("keras_Model.h5", compile=False)
     class_names = open("labels.txt", "r").readlines()
     return model, class_names
 
 model, class_names = load_tf_model()
 
-# -----------------------------
-# CONNECT SUPABASE
-# -----------------------------
-@st.cache_resource
-def init_supabase():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
-supabase: Client = init_supabase()
-
-# -----------------------------
-# IMAGE PREPROCESSING
-# -----------------------------
+# -----------------------
+# PREPROCESS
+# -----------------------
 def preprocess_image(image):
     size = (224, 224)
     image = ImageOps.fit(image, size, Image.Resampling.LANCZOS)
     image_array = np.asarray(image)
-    normalized_image_array = (image_array.astype(np.float32) / 127.5) - 1
+    normalized = (image_array.astype(np.float32) / 127.5) - 1
     data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
-    data[0] = normalized_image_array
+    data[0] = normalized
     return data
 
-# -----------------------------
-# PREDICT FUNCTION
-# -----------------------------
 def predict_image(image):
     data = preprocess_image(image)
     prediction = model.predict(data, verbose=0)
     index = np.argmax(prediction)
     class_name = class_names[index][2:].strip()
-    confidence_score = float(prediction[0][index])
-    return class_name, confidence_score
+    confidence = float(prediction[0][index])
+    return class_name, confidence
 
-# -----------------------------
-# FETCH IMAGES FROM SUPABASE
-# -----------------------------
-@st.cache_data(ttl=60)
-def fetch_images():
-    response = supabase.table(images).select("*").execute()
-    return response.data
+# -----------------------
+# UPLOAD SECTION
+# -----------------------
+st.title("AI Image Classifier Dashboard")
 
-# -----------------------------
-# UI
-# -----------------------------
-st.title("🧠 AI Image Classifier Dashboard")
+uploaded_file = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"])
 
-images = fetch_images()
+if uploaded_file:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Uploaded Image")
 
-if not images:
-    st.warning("No images found in database.")
-    st.stop()
+    with st.spinner("Processing..."):
+        class_name, confidence = predict_image(image)
 
-# Predict for all images
-results = []
+        # Upload to Supabase Storage
+        file_id = str(uuid.uuid4()) + ".jpg"
+        file_bytes = uploaded_file.getvalue()
 
-with st.spinner("Running predictions..."):
-    for entry in images:
-        try:
-            img_response = requests.get(entry["image_url"])
-            img = Image.open(BytesIO(img_response.content)).convert("RGB")
-            class_name, confidence = predict_image(img)
+        supabase.storage.from_("images").upload(file_id, file_bytes)
 
-            results.append({
-                "id": entry["id"],
-                "image_url": entry["image_url"],
-                "class_name": class_name,
-                "confidence": confidence
-            })
+        public_url = supabase.storage.from_("images").get_public_url(file_id)
 
-        except Exception as e:
-            st.error(f"Error processing image {entry['id']}: {e}")
+        # Insert into DB
+        supabase.table("images").insert({
+            "image_path": public_url,
+            "predicted_class": class_name,
+            "confidence_score": confidence
+        }).execute()
 
-# -----------------------------
-# FILTERING
-# -----------------------------
-all_classes = sorted(list(set(r["class_name"] for r in results)))
+    st.success(f"Prediction: {class_name}")
+    st.write(f"Confidence: {confidence:.2f}")
 
-selected_class = st.selectbox("Filter by Category", ["All"] + all_classes)
-confidence_threshold = st.slider("Minimum Confidence", 0.0, 1.0, 0.5)
+# -----------------------
+# FILTER + DISPLAY
+# -----------------------
+st.divider()
+st.header("Browse Images")
 
-filtered_results = [
-    r for r in results
-    if (selected_class == "All" or r["class_name"] == selected_class)
-    and r["confidence"] >= confidence_threshold
-]
+response = supabase.table("images").select("*").execute()
+rows = response.data
 
-st.write(f"Showing {len(filtered_results)} results")
+if rows:
+    classes = sorted(list(set(r["predicted_class"] for r in rows)))
+    selected_class = st.selectbox("Filter by class", ["All"] + classes)
+    min_conf = st.slider("Min confidence", 0.0, 1.0, 0.5)
 
-# -----------------------------
-# DISPLAY IMAGES
-# -----------------------------
-cols = st.columns(3)
+    filtered = [
+        r for r in rows
+        if (selected_class == "All" or r["predicted_class"] == selected_class)
+        and r["confidence_score"] >= min_conf
+    ]
 
-for i, result in enumerate(filtered_results):
-    with cols[i % 3]:
-        st.image(result["image_url"])
-        st.write(f"**Class:** {result['class_name']}")
-        st.write(f"Confidence: {result['confidence']:.2f}")
+    cols = st.columns(3)
+
+    for i, item in enumerate(filtered):
+        with cols[i % 3]:
+            st.image(item["image_path"])
+            st.write(item["predicted_class"])
+            st.write(f"{item['confidence_score']:.2f}")
+else:
+    st.info("No images yet.")
