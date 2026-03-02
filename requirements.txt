@@ -5,3 +5,4 @@ numpy
 supabase
 requests
 keras==2.12.0
+io
