@@ -9,7 +9,7 @@ from supabase import create_client, Client
 # -----------------------------
 # CONFIG
 # -----------------------------
-SUPABASE_URL = "YOUR_SUPABASE_URL"
+SUPABASE_URL = "https://cmnefsyoqrozpejbyxlh.supabase.co"
 SUPABASE_KEY = "YOUR_SUPABASE_ANON_KEY"
 TABLE_NAME = "images"
 
