@@ -61,7 +61,7 @@ def predict_image(image):
 # -----------------------------
 @st.cache_data(ttl=60)
 def fetch_images():
-    response = supabase.table(TABLE_NAME).select("*").execute()
+    response = supabase.table(images).select("*").execute()
     return response.data
 
 # -----------------------------
